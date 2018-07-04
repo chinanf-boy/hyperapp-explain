@@ -1,34 +1,34 @@
-# hyperapp
+# hyperapp [![explain](http://llever.com/explain.svg)](https://github.com/chinanf-boy/Source-Explain)
 
 1 KB JavaScript 库 - 构建 web 应用. 
 
-[![explain](http://llever.com/explain.svg)](https://github.com/chinanf-boy/Source-Explain)
-    
-Explanation
+> "version": "1.2.6"
 
-> "version": "1.0.0"
+[github source](https://github.com/hyperapp/hyperapp/tree/1.2.6)
 
-[github source](https://github.com/)
+[中文](./readme.md) |  ~~[english explain](./README.en.md)~~
 
-~~[english](./README.en.md)~~
+欢迎 `Issue` 和 `Pull` ❤️, 最好 `Pull` 👏
 
 ---
 
 😯只有1kb的应用框架
 
+- [ ] [校对🀄️: 原文 readme.md 🇨🇳翻译](./hyperapp.readme.md)
+
 ---
 
 ## 本目录
 
-- [不先使用何谈解释](#使用-hyperapp)
+- [x] [不先使用何谈解释](#使用-hyperapp)
 
-- [认识-`package.json`](#package-json)
+- [x] [认识-`package.json`](#package-json)
 
-- [src-index](#src-index)
+- [x] [src/index 主文件](#src-index)
 
-- [h-jsx语法糖](#h-jsx语法糖)
+- [ ] [ h - jsx语法糖](#h-jsx语法糖)
 
-- [app-结合与挂载](#app-结合与挂载)
+- [ ] [app - 结合与挂载](#app-结合与挂载)
 
 ---
 
@@ -127,8 +127,7 @@ import { h, app } from "hyperapp"
 > `h` 不仅作为-`JSX语法糖`-且-作为规范`组件结构`的作用
 
 ``` js
-export function h(name, props) {
-  var node
+export function h(name, attributes) {
   var rest = []
   var children = []
   var length = arguments.length
@@ -136,7 +135,8 @@ export function h(name, props) {
   while (length-- > 2) rest.push(arguments[length])
 
   while (rest.length) {
-    if (Array.isArray((node = rest.pop()))) {
+    var node = rest.pop()
+    if (node && node.pop) {
       for (length = node.length; length--; ) {
         rest.push(node[length])
       }
@@ -146,11 +146,12 @@ export function h(name, props) {
   }
 
   return typeof name === "function"
-    ? name(props || {}, children)
+    ? name(attributes || {}, children)
     : {
-        name: name,
-        props: props || {},
-        children: children
+        nodeName: name,
+        attributes: attributes || {},
+        children: children,
+        key: attributes && attributes.key
       }
 }
 ```
@@ -172,70 +173,114 @@ export function h(name, props) {
 代码 28-315
 
 ``` js
-export function app(state, actions, view, container) {
-  var renderLock
-  var invokeLaterStack = []
-  var rootElement = (container && container.children[0]) || null
-  var lastNode = rootElement && toVNode(rootElement, [].map)
-  var globalState = copy(state)
-  var wiredActions = copy(actions)
+export function h(name, attributes) {
+  var rest = []
+  var children = []
+  var length = arguments.length
 
-  scheduleRender(wireStateToActions([], globalState, wiredActions))
+  while (length-- > 2) rest.push(arguments[length])
+
+  while (rest.length) {
+    var node = rest.pop()
+    if (node && node.pop) {
+      for (length = node.length; length--; ) {
+        rest.push(node[length])
+      }
+    } else if (node != null && node !== true && node !== false) {
+      children.push(node)
+    }
+  }
+
+  return typeof name === "function"
+    ? name(attributes || {}, children)
+    : {
+        nodeName: name,
+        attributes: attributes || {},
+        children: children,
+        key: attributes && attributes.key
+      }
+}
+
+export function app(state, actions, view, container) {
+  var map = [].map
+  var rootElement = (container && container.children[0]) || null
+  var oldNode = rootElement && recycleElement(rootElement)
+  var lifecycle = []
+  var skipRender
+  var isRecycling = true
+  var globalState = clone(state)
+  var wiredActions = wireStateToActions([], globalState, clone(actions))
+
+  scheduleRender()
 
   return wiredActions
 
-  function toVNode(element, map) {
+  function recycleElement(element) {
     return {
-      name: element.nodeName.toLowerCase(),
-      props: {},
+      nodeName: element.nodeName.toLowerCase(),
+      attributes: {},
       children: map.call(element.childNodes, function(element) {
-        return element.nodeType === 3
+        return element.nodeType === 3 // Node.TEXT_NODE
           ? element.nodeValue
-          : toVNode(element, map)
+          : recycleElement(element)
       })
     }
   }
 
-  function render() {
-    renderLock = !renderLock
+  function resolveNode(node) {
+    return typeof node === "function"
+      ? resolveNode(node(globalState, wiredActions))
+      : node != null
+        ? node
+        : ""
+  }
 
-    var next = view(globalState, wiredActions)
-    if (container && !renderLock) {
-      rootElement = patch(container, rootElement, lastNode, (lastNode = next))
+  function render() {
+    skipRender = !skipRender
+
+    var node = resolveNode(view)
+
+    if (container && !skipRender) {
+      rootElement = patch(container, rootElement, oldNode, (oldNode = node))
     }
 
-    while ((next = invokeLaterStack.pop())) next()
+    isRecycling = false
+
+    while (lifecycle.length) lifecycle.pop()()
   }
 
   function scheduleRender() {
-    if (!renderLock) {
-      renderLock = !renderLock
+    if (!skipRender) {
+      skipRender = true
       setTimeout(render)
     }
   }
 
-  function copy(target, source) {
-    var obj = {}
+  function clone(target, source) {
+    var out = {}
 
-    for (var i in target) obj[i] = target[i]
-    for (var i in source) obj[i] = source[i]
+    for (var i in target) out[i] = target[i]
+    for (var i in source) out[i] = source[i]
 
-    return obj
+    return out
   }
 
-  function set(path, value, source) {
+  function setPartialState(path, value, source) {
     var target = {}
     if (path.length) {
       target[path[0]] =
-        path.length > 1 ? set(path.slice(1), value, source[path[0]]) : value
-      return copy(source, target)
+        path.length > 1
+          ? setPartialState(path.slice(1), value, source[path[0]])
+          : value
+      return clone(source, target)
     }
     return value
   }
 
-  function get(path, source) {
-    for (var i = 0; i < path.length; i++) {
-      source = source[path[i]]
+  function getPartialState(path, source) {
+    var i = 0
+    while (i < path.length) {
+      source = source[path[i++]]
     }
     return source
   }
@@ -245,43 +290,78 @@ export function app(state, actions, view, container) {
       typeof actions[key] === "function"
         ? (function(key, action) {
             actions[key] = function(data) {
-              if (typeof (data = action(data)) === "function") {
-                data = data(get(path, globalState), actions)
+              var result = action(data)
+
+              if (typeof result === "function") {
+                result = result(getPartialState(path, globalState), actions)
               }
 
               if (
-                data &&
-                data !== (state = get(path, globalState)) &&
-                !data.then // Promise
+                result &&
+                result !== (state = getPartialState(path, globalState)) &&
+                !result.then // !isPromise
               ) {
                 scheduleRender(
-                  (globalState = set(path, copy(state, data), globalState))
+                  (globalState = setPartialState(
+                    path,
+                    clone(state, result),
+                    globalState
+                  ))
                 )
               }
 
-              return data
+              return result
             }
           })(key, actions[key])
         : wireStateToActions(
             path.concat(key),
-            (state[key] = state[key] || {}),
-            (actions[key] = copy(actions[key]))
+            (state[key] = clone(state[key])),
+            (actions[key] = clone(actions[key]))
           )
     }
+
+    return actions
   }
 
   function getKey(node) {
-    return node && node.props ? node.props.key : null
+    return node ? node.key : null
   }
 
-  function setElementProp(element, name, value, isSVG, oldValue) {
+  function eventListener(event) {
+    return event.currentTarget.events[event.type](event)
+  }
+
+  function updateAttribute(element, name, value, oldValue, isSvg) {
     if (name === "key") {
     } else if (name === "style") {
-      for (var i in copy(oldValue, value)) {
-        element[name][i] = value == null || value[i] == null ? "" : value[i]
+      for (var i in clone(oldValue, value)) {
+        var style = value == null || value[i] == null ? "" : value[i]
+        if (i[0] === "-") {
+          element[name].setProperty(i, style)
+        } else {
+          element[name][i] = style
+        }
       }
     } else {
-      if (typeof value === "function" || (name in element && !isSVG)) {
+      if (name[0] === "o" && name[1] === "n") {
+        name = name.slice(2)
+
+        if (element.events) {
+          if (!oldValue) oldValue = element.events[name]
+        } else {
+          element.events = {}
+        }
+
+        element.events[name] = value
+
+        if (value) {
+          if (!oldValue) {
+            element.addEventListener(name, eventListener)
+          }
+        } else {
+          element.removeEventListener(name, eventListener)
+        }
+      } else if (name in element && name !== "list" && !isSvg) {
         element[name] = value == null ? "" : value
       } else if (value != null && value !== false) {
         element.setAttribute(name, value)
@@ -293,172 +373,194 @@ export function app(state, actions, view, container) {
     }
   }
 
-  function createElement(node, isSVG) {
+  function createElement(node, isSvg) {
     var element =
       typeof node === "string" || typeof node === "number"
         ? document.createTextNode(node)
-        : (isSVG = isSVG || node.name === "svg")
-          ? document.createElementNS("http://www.w3.org/2000/svg", node.name)
-          : document.createElement(node.name)
+        : (isSvg = isSvg || node.nodeName === "svg")
+          ? document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              node.nodeName
+            )
+          : document.createElement(node.nodeName)
 
-    if (node.props) {
-      if (node.props.oncreate) {
-        invokeLaterStack.push(function() {
-          node.props.oncreate(element)
+    var attributes = node.attributes
+    if (attributes) {
+      if (attributes.oncreate) {
+        lifecycle.push(function() {
+          attributes.oncreate(element)
         })
       }
 
       for (var i = 0; i < node.children.length; i++) {
-        element.appendChild(createElement(node.children[i], isSVG))
+        element.appendChild(
+          createElement(
+            (node.children[i] = resolveNode(node.children[i])),
+            isSvg
+          )
+        )
       }
 
-      for (var name in node.props) {
-        setElementProp(element, name, node.props[name], isSVG)
+      for (var name in attributes) {
+        updateAttribute(element, name, attributes[name], null, isSvg)
       }
     }
 
     return element
   }
 
-  function updateElement(element, oldProps, props, isSVG) {
-    for (var name in copy(oldProps, props)) {
+  function updateElement(element, oldAttributes, attributes, isSvg) {
+    for (var name in clone(oldAttributes, attributes)) {
       if (
-        props[name] !==
+        attributes[name] !==
         (name === "value" || name === "checked"
           ? element[name]
-          : oldProps[name])
+          : oldAttributes[name])
       ) {
-        setElementProp(element, name, props[name], isSVG, oldProps[name])
+        updateAttribute(
+          element,
+          name,
+          attributes[name],
+          oldAttributes[name],
+          isSvg
+        )
       }
     }
 
-    if (props.onupdate) {
-      invokeLaterStack.push(function() {
-        props.onupdate(element, oldProps)
+    var cb = isRecycling ? attributes.oncreate : attributes.onupdate
+    if (cb) {
+      lifecycle.push(function() {
+        cb(element, oldAttributes)
       })
     }
   }
 
-  function removeChildren(element, node, props) {
-    if ((props = node.props)) {
+  function removeChildren(element, node) {
+    var attributes = node.attributes
+    if (attributes) {
       for (var i = 0; i < node.children.length; i++) {
         removeChildren(element.childNodes[i], node.children[i])
       }
 
-      if (props.ondestroy) {
-        props.ondestroy(element)
+      if (attributes.ondestroy) {
+        attributes.ondestroy(element)
       }
     }
     return element
   }
 
-  function removeElement(parent, element, node, cb) {
+  function removeElement(parent, element, node) {
     function done() {
       parent.removeChild(removeChildren(element, node))
     }
 
-    if (node.props && (cb = node.props.onremove)) {
+    var cb = node.attributes && node.attributes.onremove
+    if (cb) {
       cb(element, done)
     } else {
       done()
     }
   }
 
-  function patch(parent, element, oldNode, node, isSVG, nextSibling) {
+  function patch(parent, element, oldNode, node, isSvg) {
     if (node === oldNode) {
-    } else if (oldNode == null) {
-      element = parent.insertBefore(createElement(node, isSVG), element)
-    } else if (node.name && node.name === oldNode.name) {
+    } else if (oldNode == null || oldNode.nodeName !== node.nodeName) {
+      var newElement = createElement(node, isSvg)
+      parent.insertBefore(newElement, element)
+
+      if (oldNode != null) {
+        removeElement(parent, element, oldNode)
+      }
+
+      element = newElement
+    } else if (oldNode.nodeName == null) {
+      element.nodeValue = node
+    } else {
       updateElement(
         element,
-        oldNode.props,
-        node.props,
-        (isSVG = isSVG || node.name === "svg")
+        oldNode.attributes,
+        node.attributes,
+        (isSvg = isSvg || node.nodeName === "svg")
       )
 
-      var oldElements = []
       var oldKeyed = {}
       var newKeyed = {}
+      var oldElements = []
+      var oldChildren = oldNode.children
+      var children = node.children
 
-      for (var i = 0; i < oldNode.children.length; i++) {
+      for (var i = 0; i < oldChildren.length; i++) {
         oldElements[i] = element.childNodes[i]
 
-        var oldChild = oldNode.children[i]
-        var oldKey = getKey(oldChild)
-
-        if (null != oldKey) {
-          oldKeyed[oldKey] = [oldElements[i], oldChild]
+        var oldKey = getKey(oldChildren[i])
+        if (oldKey != null) {
+          oldKeyed[oldKey] = [oldElements[i], oldChildren[i]]
         }
       }
 
       var i = 0
-      var j = 0
+      var k = 0
 
-      while (j < node.children.length) {
-        var oldChild = oldNode.children[i]
-        var newChild = node.children[j]
-
-        var oldKey = getKey(oldChild)
-        var newKey = getKey(newChild)
+      while (k < children.length) {
+        var oldKey = getKey(oldChildren[i])
+        var newKey = getKey((children[k] = resolveNode(children[k])))
 
         if (newKeyed[oldKey]) {
           i++
           continue
         }
 
-        if (newKey == null) {
+        if (newKey != null && newKey === getKey(oldChildren[i + 1])) {
           if (oldKey == null) {
-            patch(element, oldElements[i], oldChild, newChild, isSVG)
-            j++
+            removeElement(element, oldElements[i], oldChildren[i])
+          }
+          i++
+          continue
+        }
+
+        if (newKey == null || isRecycling) {
+          if (oldKey == null) {
+            patch(element, oldElements[i], oldChildren[i], children[k], isSvg)
+            k++
           }
           i++
         } else {
-          var recyledNode = oldKeyed[newKey] || []
+          var keyedNode = oldKeyed[newKey] || []
 
           if (oldKey === newKey) {
-            patch(element, recyledNode[0], recyledNode[1], newChild, isSVG)
+            patch(element, keyedNode[0], keyedNode[1], children[k], isSvg)
             i++
-          } else if (recyledNode[0]) {
+          } else if (keyedNode[0]) {
             patch(
               element,
-              element.insertBefore(recyledNode[0], oldElements[i]),
-              recyledNode[1],
-              newChild,
-              isSVG
+              element.insertBefore(keyedNode[0], oldElements[i]),
+              keyedNode[1],
+              children[k],
+              isSvg
             )
           } else {
-            patch(element, oldElements[i], null, newChild, isSVG)
+            patch(element, oldElements[i], null, children[k], isSvg)
           }
 
-          j++
-          newKeyed[newKey] = newChild
+          newKeyed[newKey] = children[k]
+          k++
         }
       }
 
-      while (i < oldNode.children.length) {
-        var oldChild = oldNode.children[i]
-        if (getKey(oldChild) == null) {
-          removeElement(element, oldElements[i], oldChild)
+      while (i < oldChildren.length) {
+        if (getKey(oldChildren[i]) == null) {
+          removeElement(element, oldElements[i], oldChildren[i])
         }
         i++
       }
 
       for (var i in oldKeyed) {
-        if (!newKeyed[oldKeyed[i][1].props.key]) {
+        if (!newKeyed[i]) {
           removeElement(element, oldKeyed[i][0], oldKeyed[i][1])
         }
       }
-    } else if (node.name === oldNode.name) {
-      element.nodeValue = node
-    } else {
-      element = parent.insertBefore(
-        createElement(node, isSVG),
-        (nextSibling = element)
-      )
-      removeElement(parent, nextSibling, oldNode)
     }
     return element
   }
 }
-
 ```
