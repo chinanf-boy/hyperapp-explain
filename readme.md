@@ -40,7 +40,7 @@
 
 ``` json
 {
-   “ plugins ”：[[ “ transform-react-jsx ”，{ “ pragma ”：“ h ” }]]
+  "plugins": [["transform-react-jsx", { "pragma": "h" }]]
 }
 ```
 
